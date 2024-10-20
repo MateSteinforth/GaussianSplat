@@ -16,6 +16,7 @@ import math
 import mathutils
 from math import pi, sin, cos
 from mathutils import Vector
+import subprocess
 
 # Output directory
 output_dir = "/Users/msteinforth/Desktop/temp/gs"
@@ -25,6 +26,17 @@ images_file = os.path.join(output_dir, "images.txt")
 points3D_file = os.path.join(output_dir, "points3D.txt")
 images_dir = os.path.join(output_dir, "")
 os.makedirs(images_dir, exist_ok=True)
+
+def run_postshot_cli(cli_path, command_args):
+    # Prepare the command
+    command = [cli_path] + command_args
+    
+    # Execute the command
+    try:
+        result = subprocess.run(command, check=True, text=True, capture_output=True)
+        print("Postshot CLI Output:", result.stdout)
+    except subprocess.CalledProcessError as e:
+        print("Error running Postshot CLI:", e.stderr)
 
 def create_cameras_around_sphere(num_cameras):
     cameras = []
@@ -238,6 +250,12 @@ class EXPORT_OT_scene_data(Operator):
         # Delete cameras after exporting data
         for camera in cameras:
             bpy.data.objects.remove(camera)
+
+        # pass data to Postshot
+        # images_dir = os.path.join(settings.export_path, "images")
+        # command_args = ["--input", images_dir, "--output", "output_path", "--train"]
+        # run_postshot_cli(settings.postshot_cli_path, command_args)
+
         self.report({'INFO'}, "Export completed successfully.")
         return {'FINISHED'}
         
@@ -255,7 +273,8 @@ class EXPORT_PT_main_panel(Panel):
         layout.prop(settings, "export_path")
         layout.prop(settings, "num_cameras")
         layout.prop(settings, "num_points")
-        layout.operator(EXPORT_OT_scene_data.bl_idname)
+        layout.prop(settings, "postshot_cli_path")
+        layout.operator("export.scene_data")
         
 class ExportSettings(PropertyGroup):
     object_to_export: PointerProperty(
@@ -282,6 +301,12 @@ class ExportSettings(PropertyGroup):
         min=1,
         max=10000,
         description="Set the number of points to distribute"
+    )
+    postshot_cli_path: StringProperty(
+        name="Postshot CLI Path",
+        default="C:\\Program Files\\Jawset Postshot\\bin\\postshot-cli.exe",
+        subtype='FILE_PATH',
+        description="Path to the Postshot CLI executable"
     )
 
 def register():
