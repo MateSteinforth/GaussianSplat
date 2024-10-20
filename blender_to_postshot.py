@@ -17,6 +17,7 @@ import mathutils
 from math import pi, sin, cos
 from mathutils import Vector
 import subprocess
+import random
 
 # Output directory
 output_dir = "/Users/msteinforth/Desktop/temp/gs"
@@ -38,24 +39,47 @@ def run_postshot_cli(cli_path, command_args):
     except subprocess.CalledProcessError as e:
         print("Error running Postshot CLI:", e.stderr)
 
-def create_cameras_around_sphere(num_cameras):
+import bpy
+import math
+from math import pi, sin, cos, acos
+from mathutils import Vector
+
+def create_cameras_around_sphere(target_object, num_cameras, fov_degrees=60, safety_margin=2):
+    if target_object is None or target_object.type != 'MESH':
+        raise ValueError("No valid mesh object is provided.")
     cameras = []
-    radius = 10  # Distance from the center
+    scene = bpy.context.scene
+    render = scene.render
+    aspect_ratio = render.resolution_x / render.resolution_y
+    # Calculate the diagonal size of the object's bounding box
+    bbox_corners = [target_object.matrix_world @ Vector(corner) for corner in target_object.bound_box]
+    bbox_diagonal = max((bbox_corners[i] - bbox_corners[j]).length for i in range(len(bbox_corners)) for j in range(i + 1, len(bbox_corners)))
+    # Adjust FOV based on aspect ratio
+    if aspect_ratio > 1:
+        # Wider than it is tall, adjust horizontal FOV
+        fov_radians = 2 * math.atan(math.tan(math.radians(fov_degrees) / 2) * aspect_ratio)
+    else:
+        # Taller than it is wide, use vertical FOV directly
+        fov_radians = math.radians(fov_degrees)
+    # Calculate the required distance to fit the object in the camera frame
+    distance = (bbox_diagonal / 2) / math.tan(fov_radians / 2) * safety_margin
     golden_angle = pi * (3 - math.sqrt(5))  # Fibonacci golden angle
     for i in range(num_cameras):
         theta = golden_angle * i
-        phi = math.acos(1 - 2 * (i + 0.5) / num_cameras)
-        x = radius * sin(phi) * cos(theta)
-        y = radius * sin(phi) * sin(theta)
-        z = radius * cos(phi)
+        phi = acos(1 - 2 * (i + 0.5) / num_cameras)
+        x = distance * sin(phi) * cos(theta)
+        y = distance * sin(phi) * sin(theta)
+        z = distance * cos(phi)
         # Create camera
         bpy.ops.object.camera_add(location=(x, y, z))
         camera = bpy.context.object
         camera.name = f"Camera_{i+1}"
         # Set camera rotation mode
         camera.rotation_mode = 'XYZ'
-        # Calculate direction vector from camera to target (origin)
-        direction = Vector((0, 0, 0)) - Vector((x, y, z))
+        # Set camera FOV
+        camera.data.angle = fov_radians
+        # Calculate direction vector from camera to target
+        direction = target_object.location - Vector((x, y, z))
         rot_quat = direction.to_track_quat('Z', 'Y')
         # Set camera rotation
         camera.rotation_euler = rot_quat.to_euler()
@@ -64,14 +88,17 @@ def create_cameras_around_sphere(num_cameras):
         cameras.append(camera)
     return cameras
 
-# Function to get camera intrinsics in COLMAP format
 def get_camera_intrinsics(camera):
     scene = bpy.context.scene
     render = scene.render
-    K = camera.data.lens
     width = render.resolution_x
     height = render.resolution_y
-    fx = K * width / camera.data.sensor_width
+    # Calculate focal length from FOV
+    fov_radians = camera.data.angle
+    sensor_width = camera.data.sensor_width
+    focal_length = (sensor_width / 2.0) / math.tan(fov_radians / 2.0)
+    # Calculate intrinsic parameters
+    fx = focal_length * width / sensor_width
     fy = fx  # Assuming square pixels
     cx = width / 2.0
     cy = height / 2.0
@@ -197,14 +224,14 @@ def export_points(mesh_obj, points, file_path):
     with open(file_path, 'w') as f:
         f.write("# 3D point list with one line of data per point:\n")
         f.write("# POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
-        
         for idx, point in enumerate(points):
             # Convert tuple point to Vector
             point_vector = Vector(point)
             # Convert point to world coordinates
             world_point = mesh_obj.matrix_world @ point_vector
+            # Default random color
+            r, g, b = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
             x, y, z = world_point.x, world_point.y, world_point.z
-            r, g, b = 255, 255, 255  # Example color (white)
             error = 1.0  # Example reconstruction error
             track = [(0, idx), (1, idx)]  # Adjust as per your dataset
             track_str = ' '.join([f"{img_id} {point2d_idx}" for img_id, point2d_idx in track])
@@ -242,7 +269,7 @@ class EXPORT_OT_scene_data(Operator):
         # Delete the particle system after exporting points
         delete_points(selected_obj, particle_system)
         # Create cameras and get the list
-        cameras = create_cameras_around_sphere(num_cameras)
+        cameras = create_cameras_around_sphere(selected_obj, num_cameras)
         # Export camera intrinsics to cameras.txt
         export_camera_intrinsics(cameras, cameras_file)
         # Export images metadata to images.txt
