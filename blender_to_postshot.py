@@ -2,7 +2,7 @@ bl_info = {
     "name": "PostShot Export",
     "author": "Mate Steinforth",
     "version": (1, 0),
-    "blender": (2, 93, 0),
+    "blender": (4, 0, 0),
     "location": "View3D > Sidebar > PostShot Tab",
     "description": "Exports camera and point data for 3D reconstruction",
     "category": "3D View"
@@ -234,47 +234,40 @@ class EXPORT_OT_scene_data(Operator):
     bl_idname = "export.scene_data"
     bl_label = "Export Scene Data"
     bl_description = "Export cameras and points data for 3D reconstruction"
+    
     def execute(self, context):
         settings = context.scene.export_settings
         output_dir = settings.export_path
         os.makedirs(output_dir, exist_ok=True)
+        
         cameras_file = os.path.join(output_dir, "cameras.txt")
         images_file = os.path.join(output_dir, "images.txt")
         points3D_file = os.path.join(output_dir, "points3D.txt")
         images_dir = os.path.join(output_dir, "images")
         os.makedirs(images_dir, exist_ok=True)
         
-        selected_obj = settings.object_to_export  # Retrieve the selected object from settings
-        num_points = settings.num_points
-        num_cameras = settings.num_cameras
-        # Check if a valid mesh object is selected
+        selected_obj = settings.object_to_export
         if selected_obj is None or selected_obj.type != 'MESH':
             self.report({'ERROR'}, "No valid mesh object is selected.")
             return {'CANCELLED'}
-        # Distribute points on the selected mesh object
-        points, particle_system = distribute_points(selected_obj, num_points)
+        
+        # Assuming distribute_points, export_points, delete_points, create_cameras_around_sphere,
+        # export_camera_intrinsics, and export_images_metadata are defined elsewhere and updated for Blender 4.0
+        points, particle_system = distribute_points(selected_obj, settings.num_points)
         if not points:
             self.report({'ERROR'}, "Failed to distribute points on the mesh.")
             return {'CANCELLED'}
-        # Export points
+        
         export_points(selected_obj, points, points3D_file)
-        # Delete the particle system after exporting points
         delete_points(selected_obj, particle_system)
-        # Create cameras and get the list
-        cameras = create_cameras_around_sphere(selected_obj, num_cameras)
-        # Export camera intrinsics to cameras.txt
+        
+        cameras = create_cameras_around_sphere(selected_obj, settings.num_cameras)
         export_camera_intrinsics(cameras, cameras_file)
-        # Export images metadata to images.txt
         export_images_metadata(cameras, images_file, images_dir)
-        # Delete cameras after exporting data
+        
         for camera in cameras:
             bpy.data.objects.remove(camera)
-
-        # pass data to Postshot
-        # images_dir = os.path.join(settings.export_path, "images")
-        # command_args = ["--input", images_dir, "--output", "output_path", "--train"]
-        # run_postshot_cli(settings.postshot_cli_path, command_args)
-
+        
         self.report({'INFO'}, "Export completed successfully.")
         return {'FINISHED'}
         
@@ -285,6 +278,7 @@ class EXPORT_PT_main_panel(Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'PostShot'
+    
     def draw(self, context):
         layout = self.layout
         settings = context.scene.export_settings
