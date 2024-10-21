@@ -19,15 +19,6 @@ from mathutils import Vector
 import subprocess
 import random
 
-# Output directory
-output_dir = "/Users/msteinforth/Desktop/temp/gs"
-os.makedirs(output_dir, exist_ok=True)
-cameras_file = os.path.join(output_dir, "cameras.txt")
-images_file = os.path.join(output_dir, "images.txt")
-points3D_file = os.path.join(output_dir, "points3D.txt")
-images_dir = os.path.join(output_dir, "")
-os.makedirs(images_dir, exist_ok=True)
-
 def run_postshot_cli(cli_path, command_args):
     # Prepare the command
     command = [cli_path] + command_args
@@ -169,15 +160,16 @@ def export_images_metadata(cameras, file_path, images_dir):
             # Image file name
             img_name = f"frame_{cam_id:05d}.png"
             img_path = os.path.join(images_dir, img_name)
-
+            # Select and highlight the current camera
+            bpy.ops.object.select_all(action='DESELECT')
+            camera.select_set(True)
+            bpy.context.view_layer.objects.active = camera
             # Render image
             bpy.context.scene.camera = camera
             bpy.context.scene.render.filepath = img_path
             bpy.ops.render.render(write_still=True)
-
-            f.write(f"{cam_id + 1} {qvec[0]} {qvec[1]} {qvec[2]} {qvec[3]} {colmap_location[0]} {colmap_location[1]} {colmap_location[2]} 0 {img_name}\n")
-            f.write("\n")
-
+            # Refresh the viewport
+            bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
             f.write(f"{cam_id + 1} {qvec[0]} {qvec[1]} {qvec[2]} {qvec[3]} {colmap_location[0]} {colmap_location[1]} {colmap_location[2]} 0 {img_name}\n")
             f.write("\n")
 
