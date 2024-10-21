@@ -42,6 +42,10 @@ def create_cameras_around_sphere(target_object, num_cameras, fov_degrees=60, saf
     scene = bpy.context.scene
     render = scene.render
     aspect_ratio = render.resolution_x / render.resolution_y
+    # Calculate the centroid of the mesh
+    mesh_data = target_object.data
+    verts = [target_object.matrix_world @ v.co for v in mesh_data.vertices]
+    centroid = sum(verts, Vector()) / len(verts)
     # Calculate the diagonal size of the object's bounding box
     bbox_corners = [target_object.matrix_world @ Vector(corner) for corner in target_object.bound_box]
     bbox_diagonal = max((bbox_corners[i] - bbox_corners[j]).length for i in range(len(bbox_corners)) for j in range(i + 1, len(bbox_corners)))
@@ -58,23 +62,19 @@ def create_cameras_around_sphere(target_object, num_cameras, fov_degrees=60, saf
     for i in range(num_cameras):
         theta = golden_angle * i
         phi = acos(1 - 2 * (i + 0.5) / num_cameras)
-        x = distance * sin(phi) * cos(theta)
-        y = distance * sin(phi) * sin(theta)
-        z = distance * cos(phi)
+        x = centroid.x + distance * sin(phi) * cos(theta)
+        y = centroid.y + distance * sin(phi) * sin(theta)
+        z = centroid.z + distance * cos(phi)
         # Create camera
         bpy.ops.object.camera_add(location=(x, y, z))
         camera = bpy.context.object
         camera.name = f"Camera_{i+1}"
-        # Set camera rotation mode
         camera.rotation_mode = 'XYZ'
-        # Set camera FOV
         camera.data.angle = fov_radians
-        # Calculate direction vector from camera to target
-        direction = target_object.location - Vector((x, y, z))
+        # Calculate direction vector from camera to centroid
+        direction = centroid - Vector((x, y, z))
         rot_quat = direction.to_track_quat('Z', 'Y')
-        # Set camera rotation
         camera.rotation_euler = rot_quat.to_euler()
-        # Flip the camera to look at the center and then flip it upside down
         camera.rotation_euler.rotate_axis("X", math.pi)
         cameras.append(camera)
     return cameras
