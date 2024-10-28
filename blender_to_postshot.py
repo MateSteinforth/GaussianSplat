@@ -19,17 +19,6 @@ from mathutils import Vector
 import subprocess
 import random
 
-def run_postshot_cli(cli_path, command_args):
-    # Prepare the command
-    command = [cli_path] + command_args
-    
-    # Execute the command
-    try:
-        result = subprocess.run(command, check=True, text=True, capture_output=True)
-        print("Postshot CLI Output:", result.stdout)
-    except subprocess.CalledProcessError as e:
-        print("Error running Postshot CLI:", e.stderr)
-
 import bpy
 import math
 from math import pi, sin, cos, acos
@@ -79,21 +68,26 @@ def create_cameras_around_sphere(target_object, num_cameras, fov_degrees=60, saf
         cameras.append(camera)
     return cameras
 
+# Function to get camera intrinsics in COLMAP format
 def get_camera_intrinsics(camera):
     scene = bpy.context.scene
     render = scene.render
-    width = render.resolution_x
-    height = render.resolution_y
-    # Calculate focal length from FOV
-    fov_radians = camera.data.angle
+
+    width = scene.render.resolution_x
+    height = scene.render.resolution_y
+    focal_length = camera.data.lens
+    
     sensor_width = camera.data.sensor_width
-    focal_length = (sensor_width / 2.0) / math.tan(fov_radians / 2.0)
-    # Calculate intrinsic parameters
+    sensor_height = camera.data.sensor_height
     fx = focal_length * width / sensor_width
-    fy = fx  # Assuming square pixels
-    cx = width / 2.0
-    cy = height / 2.0
-    return fx, fy, cx, cy
+    fy = fx
+    # fy = focal_length * height / sensor_height
+            
+    # Calculate the principal point
+    cx = width/2
+    cy = height/2
+    return width, height, fx, fy, cx, cy
+
 
 # Function to convert Blender Z-up to COLMAP Y-up coordinates
 def convert_coordinates(cam):
@@ -119,7 +113,6 @@ def convert_coordinates(cam):
     ty = T1[1]
     tz = T1[2]
                 
-    
     return tx, ty, tz # position.x, position.z, -position.y
 
 # Function to convert Blender rotation to COLMAP format (Hamilton convention)
@@ -135,14 +128,12 @@ def convert_rotation(rotation):
 def export_camera_intrinsics(cameras, file_path):
     with open(file_path, 'w') as f:
         f.write("# Camera list with one line of data per camera:\n")
-        f.write("#   Camera ID, MODEL, width, height, fx, fy, cx, cy\n")
+        f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
         f.write(f"# Number of cameras: {len(cameras)}\n")
-        
-        for idx, camera in enumerate(cameras):
-            fx, fy, cx, cy = get_camera_intrinsics(camera)
-            width = bpy.context.scene.render.resolution_x
-            height = bpy.context.scene.render.resolution_y
-            f.write(f"{idx} PINHOLE {width} {height} {fx} {fy} {cx} {cy}\n")
+
+        for i, camera in enumerate(cameras):
+            width, height, fx, fy, cx, cy = get_camera_intrinsics(camera)
+            f.write(f"{i} OPENCV {width} {height} {fx} {fy} {cx} {cy} 0 0 0 0\n")
 
 # Function to export images metadata in COLMAP format
 def export_images_metadata(cameras, file_path, images_dir):
@@ -193,8 +184,10 @@ def distribute_points(mesh_obj, number_of_points):
     # Ensure the particle system is evaluated
     evaluated_obj = mesh_obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     particles = evaluated_obj.particle_systems[0].particles
-    # Collect points
-    points = [(particle.location.x, particle.location.y, particle.location.z) for particle in particles]
+    
+    # Collect points in world space
+    points = [particle.location for particle in particles]
+                
     return points, particle_system
 
 def delete_points(mesh_obj, particle_system):
@@ -213,17 +206,14 @@ def export_points(mesh_obj, points, file_path):
     if not mesh_obj:
         print("Mesh object not provided.")
         return
+    
     with open(file_path, 'w') as f:
         f.write("# 3D point list with one line of data per point:\n")
         f.write("# POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
         for idx, point in enumerate(points):
-            # Convert tuple point to Vector
-            point_vector = Vector(point)
-            # Convert point to world coordinates
-            world_point = mesh_obj.matrix_world @ point_vector
             # Default random color
             r, g, b = random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)
-            x, y, z = world_point.x, world_point.y, world_point.z
+            x, y, z = point.x, point.y, point.z
             error = 1.0  # Example reconstruction error
             track = [(0, idx), (1, idx)]  # Adjust as per your dataset
             track_str = ' '.join([f"{img_id} {point2d_idx}" for img_id, point2d_idx in track])
@@ -251,6 +241,12 @@ class EXPORT_OT_scene_data(Operator):
             self.report({'ERROR'}, "No valid mesh object is selected.")
             return {'CANCELLED'}
         
+        # Store transforms
+        transforms = store_transforms(selected_obj)
+
+        # Apply transforms
+        apply_transforms(selected_obj)
+
         # Assuming distribute_points, export_points, delete_points, create_cameras_around_sphere,
         # export_camera_intrinsics, and export_images_metadata are defined elsewhere and updated for Blender 4.0
         points, particle_system = distribute_points(selected_obj, settings.num_points)
@@ -260,11 +256,26 @@ class EXPORT_OT_scene_data(Operator):
         
         export_points(selected_obj, points, points3D_file)
         delete_points(selected_obj, particle_system)
+
+        # Store the current resolution
+        original_width = bpy.context.scene.render.resolution_x
+        original_height = bpy.context.scene.render.resolution_y
+
+        # Set new resolution
+        bpy.context.scene.render.resolution_x = 512
+        bpy.context.scene.render.resolution_y = 512
         
         cameras = create_cameras_around_sphere(selected_obj, settings.num_cameras)
         export_camera_intrinsics(cameras, cameras_file)
         export_images_metadata(cameras, images_file, images_dir)
         
+        # Restore transforms
+        restore_transforms(obj, transforms)
+
+        # Restore original resolution
+        bpy.context.scene.render.resolution_x = original_width
+        bpy.context.scene.render.resolution_y = original_height
+
         for camera in cameras:
             bpy.data.objects.remove(camera)
         
@@ -286,7 +297,6 @@ class EXPORT_PT_main_panel(Panel):
         layout.prop(settings, "export_path")
         layout.prop(settings, "num_cameras")
         layout.prop(settings, "num_points")
-        layout.prop(settings, "postshot_cli_path")
         layout.operator("export.scene_data")
         
 class ExportSettings(PropertyGroup):
@@ -315,12 +325,7 @@ class ExportSettings(PropertyGroup):
         max=10000,
         description="Set the number of points to distribute"
     )
-    postshot_cli_path: StringProperty(
-        name="Postshot CLI Path",
-        default="C:\\Program Files\\Jawset Postshot\\bin\\postshot-cli.exe",
-        subtype='FILE_PATH',
-        description="Path to the Postshot CLI executable"
-    )
+
 
 def register():
     bpy.utils.register_class(ExportSettings)
