@@ -24,6 +24,65 @@ import math
 from math import pi, sin, cos, acos
 from mathutils import Vector
 
+def set_background_to_black():
+    # Get the current world node tree
+    world = bpy.context.scene.world
+    node_tree = world.node_tree
+    # Find the Background node
+    background_node = None
+    for node in node_tree.nodes:
+        if node.type == 'BACKGROUND':
+            background_node = node
+            break
+    if background_node:
+        # Save the original color
+        original_color = background_node.inputs[0].default_value[:]
+        # Set the background color to pure black
+        background_node.inputs[0].default_value = (0.0, 0.0, 0.0, 1.0)
+        return original_color
+    else:
+        print("No Background node found in the World shader.")
+        return None
+
+def restore_background_color(original_color):
+    if original_color is None:
+        print("No original color to restore.")
+        return
+    # Get the current world node tree
+    world = bpy.context.scene.world
+    node_tree = world.node_tree
+    # Find the Background node
+    background_node = None
+    for node in node_tree.nodes:
+        if node.type == 'BACKGROUND':
+            background_node = node
+            break
+    if background_node:
+        # Restore the original color
+        background_node.inputs[0].default_value = original_color
+    else:
+        print("No Background node found in the World shader.")
+
+
+def store_transforms(obj):
+    """Store the current transforms of the object."""
+    return {
+        'location': obj.location.copy(),
+        'rotation_euler': obj.rotation_euler.copy(),
+        'scale': obj.scale.copy()
+    }
+    
+def apply_transforms(obj):
+    """Apply all transforms to the object."""
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    
+def restore_transforms(obj, transforms):
+    """Restore the stored transforms to the object."""
+    obj.location = transforms['location']
+    obj.rotation_euler = transforms['rotation_euler']
+    obj.scale = transforms['scale']
+
 def create_cameras_around_sphere(target_object, num_cameras, fov_degrees=60, safety_margin=2):
     if target_object is None or target_object.type != 'MESH':
         raise ValueError("No valid mesh object is provided.")
@@ -233,7 +292,7 @@ class EXPORT_OT_scene_data(Operator):
         cameras_file = os.path.join(output_dir, "cameras.txt")
         images_file = os.path.join(output_dir, "images.txt")
         points3D_file = os.path.join(output_dir, "points3D.txt")
-        images_dir = os.path.join(output_dir, "images")
+        images_dir = os.path.join(output_dir, "")
         os.makedirs(images_dir, exist_ok=True)
         
         selected_obj = settings.object_to_export
@@ -246,6 +305,8 @@ class EXPORT_OT_scene_data(Operator):
 
         # Apply transforms
         apply_transforms(selected_obj)
+
+        original_color = set_background_to_black()
 
         # Assuming distribute_points, export_points, delete_points, create_cameras_around_sphere,
         # export_camera_intrinsics, and export_images_metadata are defined elsewhere and updated for Blender 4.0
@@ -270,11 +331,13 @@ class EXPORT_OT_scene_data(Operator):
         export_images_metadata(cameras, images_file, images_dir)
         
         # Restore transforms
-        restore_transforms(obj, transforms)
+        restore_transforms(selected_obj, transforms)
 
         # Restore original resolution
         bpy.context.scene.render.resolution_x = original_width
         bpy.context.scene.render.resolution_y = original_height
+
+        restore_background_color(original_color)
 
         for camera in cameras:
             bpy.data.objects.remove(camera)
